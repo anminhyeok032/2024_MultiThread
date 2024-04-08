@@ -10,73 +10,91 @@ using namespace chrono;
 
 constexpr int MAX_THREADS = 16;
 
-
+// 각 NODE별 Lock 구현을 위해 mutex 추가
 class NODE {
 public:
 	int v;
 	NODE* next;
+	mutex lock;
 	NODE() : v(-1), next(nullptr) {}
 	NODE(int x) : v(x), next(nullptr) {}
+	
 };
 
-class null_mutex
-{
-public:
-	void lock() {}
-	void unlock() {}
-};
-
-
-class SET {
+//=============
+// 세밀한 동기화
+//=============
+class FINE_SET {
 	NODE head, tail;
-	mutex ll;
+
 public:
-	SET()
+	FINE_SET()
 	{
 		head.v = 0x80000000;
 		tail.v = 0x7FFFFFFF;
 		head.next = &tail;
 	}
+	
+	// 추가시 true 리턴
+	// 각 노드를 지날때마다 락을 따로 걸어줌
+	// return시 현재 지나고 있는 NODE의 락을 풀고 리턴함
 	bool ADD(int x)
 	{
+		head.lock.lock();
 		NODE* prev = &head;
-		ll.lock();
 		NODE* curr = prev->next;
+		curr->lock.lock();
 		while (curr->v < x) {
+			prev->lock.unlock();
 			prev = curr;
 			curr = curr->next;
+			curr->lock.lock();
 		}
-		if (curr->v != x) {
+		if (curr->v != x)
+		{
 			NODE* node = new NODE{ x };
 			node->next = curr;
 			prev->next = node;
-			ll.unlock();
+			curr->lock.unlock();
+			prev->lock.unlock();
 			return true;
 		}
-		else
+		else 
 		{
-			ll.unlock();
+			curr->lock.unlock();
+			prev->lock.unlock();
 			return false;
 		}
 	}
 
+	// 삭제시 true 리턴
+	// 각 노드를 지날때마다 락을 따로 걸어줌
+	// return시 현재 지나고 있는 NODE의 락을 풀고 리턴함
 	bool REMOVE(int x)
 	{
 		NODE* prev = &head;
-		ll.lock();
+		head.lock.lock();
 		NODE* curr = prev->next;
-		while (curr->v < x) {
+		curr->lock.lock();
+		while (curr->v < x)
+		{
+			prev->lock.unlock();
 			prev = curr;
 			curr = curr->next;
+			curr->lock.lock();
 		}
 		if (curr->v != x) {
-			ll.unlock();
+			curr->lock.unlock();
+			prev->lock.unlock();
 			return false;
 		}
 		else {
 			prev->next = curr->next;
+			
+			curr->lock.unlock();
+			prev->lock.unlock();
+
 			delete curr;
-			ll.unlock();
 			return true;
 		}
 	}
@@ -84,16 +102,24 @@ public:
 	bool CONTAINS(int x)
 	{
 		NODE* prev = &head;
-		ll.lock();
+		head.lock.lock();
 		NODE* curr = prev->next;
-		while (curr->v < x) {
+		curr->lock.lock();
+		while (curr->v < x)
+		{
+			prev->lock.unlock();
+
 			prev = curr;
 			curr = curr->next;
+
+			curr->lock.lock();
 		}
 		bool res = (curr->v == x);
-		ll.unlock();
+		curr->lock.unlock();
+		prev->lock.unlock();
 		return res;
 	}
+
 	void print20()
 	{
 		NODE* p = head.next;
@@ -117,50 +143,10 @@ public:
 	}
 };
 
-class STD_SET {
-	std::set <int> std_set;
-public:
-	STD_SET()
-	{
-	}
-	bool ADD(int x)
-	{
-		if (std_set.count(x) == 1)
-			return false;
-		std_set.insert(x);
-		return true;
-	}
 
-	bool REMOVE(int x)
-	{
-		if (std_set.count(x) == 0)
-			return false;
-		std_set.erase(x);
-		return true;
-	}
-
-	bool CONTAINS(int x)
-	{
-		return std_set.count(x) == 1;
-	}
-	void print20()
-	{
-		int count = 20;
-		for (auto x : std_set) {
-			cout << x << ", ";
-			if (--count == 0) break;
-		}
-		cout << endl;
-	}
-
-	void clear()
-	{
-		std_set.clear();
-	}
-};
-
-SET my_set;   // 성긴 동기화
-//STD_SET my_set;
+//SET my_set;		// 성긴 동기화
+FINE_SET my_set;	// 세밀한 동기화
+//STD_SET my_set;	// 싱글 스레드 no lock
 
 constexpr int RANGE = 1000;
 constexpr int LOOP = 4000000;
@@ -185,6 +171,10 @@ void worker(int num_threads)
 			int v = rand() % RANGE;
 			my_set.CONTAINS(v);
 			break;
+		}
+		default: {
+			cout << "Error\n"; 
+			exit(-1);
 		}
 		}
 	}
